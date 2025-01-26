@@ -13,13 +13,19 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
     let builder_fields = generate_builder_fields(&parsed_input.data, &name);
 
+    let builder_inits = initialize_builder_fields(&parsed_input.data, &name);
+
     let expanded = quote! {
         pub struct #builder_name {
             #builder_fields
         }
 
         impl #name {
-            pub fn builder() {}
+            pub fn builder() -> #builder_name {
+                #builder_name {
+                    #builder_inits
+                }
+            }
         }
     };
 
@@ -46,6 +52,40 @@ fn generate_builder_fields(data: &Data, ident: &proc_macro2::Ident) -> proc_macr
 
                 quote! {
                     #(#field_options,)*
+                }
+            }
+            Fields::Unnamed(ref _fields_unnamed) => {
+                Error::new_spanned(ident, "Expected Struct with Named Fields").to_compile_error()
+            }
+            Fields::Unit => {
+                Error::new_spanned(ident, "Expected Struct with Named Fields").to_compile_error()
+            }
+        },
+        _ => Error::new_spanned(ident, "Expected Struct with Named Fields").to_compile_error(),
+    };
+
+    expanded
+}
+
+fn initialize_builder_fields(data: &Data, ident: &proc_macro2::Ident) -> proc_macro2::TokenStream {
+    let expanded = match *data {
+        Data::Struct(ref data_struct) => match data_struct.fields {
+            Fields::Named(ref fields_named) => {
+                let fields_initial = fields_named.named.iter().map(|field| {
+                    let name = &field.ident;
+
+                    let name_unwrapped = name.as_ref();
+
+                    if let Some(n) = name_unwrapped {
+                        quote! { #n: None }
+                    } else {
+                        Error::new_spanned(ident, "Expected Struct with Named Fields")
+                            .to_compile_error()
+                    }
+                });
+
+                quote! {
+                    #(#fields_initial,)*
                 }
             }
             Fields::Unnamed(ref _fields_unnamed) => {
