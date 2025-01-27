@@ -1,6 +1,8 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, Data, DeriveInput, Error, Fields};
+use syn::{
+    parse_macro_input, Data, DeriveInput, Error, Fields, GenericArgument, PathArguments, Type,
+};
 
 #[proc_macro_derive(Builder)]
 pub fn derive(input: TokenStream) -> TokenStream {
@@ -57,7 +59,11 @@ fn generate_builder_fields(data: &Data, ident: &proc_macro2::Ident) -> proc_macr
                     let name_unwrapped = name.as_ref();
 
                     if let Some(n) = name_unwrapped {
-                        quote! { #n: Option<#ty>}
+                        if is_option_type(ty) {
+                            quote! { #n: #ty }
+                        } else {
+                            quote! { #n: Option<#ty>}
+                        }
                     } else {
                         Error::new_spanned(ident, "Expected Struct with Named Fields")
                             .to_compile_error()
@@ -121,10 +127,18 @@ fn generate_builder_setters(data: &Data, ident: &proc_macro2::Ident) -> proc_mac
                     let name_unwrapped = name.as_ref();
 
                     if let Some(n) = name_unwrapped {
-                        quote! { pub fn #n(&mut self, #n: #field_type) -> &mut Self {
-                            self.#n = Some(#n);
-                            self
-                        }}
+                        if is_option_type(field_type) {
+                            let inner_ty = inner_option_type(field_type);
+                            quote! { pub fn #n(&mut self, #n: #inner_ty) -> &mut Self {
+                                self.#n = Some(#n);
+                                self
+                            }}
+                        } else {
+                            quote! { pub fn #n(&mut self, #n: #field_type) -> &mut Self {
+                                self.#n = Some(#n);
+                                self
+                            }}
+                        }
                     } else {
                         Error::new_spanned(ident, "Expected Struct with Named Fields")
                             .to_compile_error()
@@ -149,17 +163,25 @@ fn set_fields(data: &Data, ident: &proc_macro2::Ident) -> proc_macro2::TokenStre
             Fields::Named(ref fields_named) => {
                 let set_expressions = fields_named.named.iter().map(|field| {
                     let name = &field.ident;
+                    let ty = &field.ty;
 
                     let name_unwrapped = name.as_ref();
 
                     if let Some(n) = name_unwrapped {
-                        let name_value = format_ident!("{}_value", n);
-                        quote! {
-                            #n: {if let Some(#name_value) = self.#n.clone() {
-                                #name_value
-                            } else {
-                                return Err(format!("Field {} is not set", stringify!(#n)).into());
-                            }}
+                        if is_option_type(ty) {
+                            quote! {
+                                #n: self.#n.clone()
+                            }
+                        } else {
+                            let name_value = format_ident!("{}_value", n);
+
+                            quote! {
+                                #n: {if let Some(#name_value) = self.#n.clone() {
+                                    #name_value
+                                } else {
+                                    return Err(format!("Field {} is not set", stringify!(#n)).into());
+                                }}
+                            }
                         }
                     } else {
                         Error::new_spanned(ident, "Expected Struct with Named Fields")
@@ -177,4 +199,32 @@ fn set_fields(data: &Data, ident: &proc_macro2::Ident) -> proc_macro2::TokenStre
     };
 
     expanded
+}
+
+fn is_option_type(ty: &Type) -> bool {
+    if let Type::Path(ref type_path) = ty {
+        let segments = &type_path.path.segments;
+
+        if let Some(first_seg) = segments.first() {
+            first_seg.ident == "Option"
+        } else {
+            false
+        }
+    } else {
+        false
+    }
+}
+
+fn inner_option_type(ty: &Type) -> &Type {
+    if let Type::Path(type_path) = ty {
+        if let Some(first_seg) = type_path.path.segments.first() {
+            if let PathArguments::AngleBracketed(args) = &first_seg.arguments {
+                if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
+                    return inner_ty;
+                }
+            }
+        }
+    }
+
+    panic!("Should be an option"); // TODO: return error
 }
