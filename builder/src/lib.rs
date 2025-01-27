@@ -25,7 +25,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
         }
 
         impl #builder_name {
-            pub fn build(self) -> Result<#name, Box<dyn std::error::Error>> {
+            pub fn build(&self) -> Result<#name, Box<dyn std::error::Error>> {
                 Ok(#name {
                     #set_expressions
                 })
@@ -155,7 +155,7 @@ fn set_fields(data: &Data, ident: &proc_macro2::Ident) -> proc_macro2::TokenStre
                     if let Some(n) = name_unwrapped {
                         let name_value = format_ident!("{}_value", n);
                         quote! {
-                            #n: {if let Some(#name_value) = self.#n {
+                            #n: {if let Some(#name_value) = self.#n.clone() {
                                 #name_value
                             } else {
                                 return Err(format!("Field {} is not set", stringify!(#n)).into());
