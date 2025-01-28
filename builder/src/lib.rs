@@ -4,7 +4,7 @@ use syn::{
     parse_macro_input, Data, DeriveInput, Error, Fields, GenericArgument, PathArguments, Type,
 };
 
-#[proc_macro_derive(Builder)]
+#[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let _ = input;
     let parsed_input = parse_macro_input!(input as DeriveInput);
@@ -21,6 +21,8 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
     let set_expressions = set_fields(&parsed_input.data, &name);
 
+    let vec_setters = generate_vec_setters(&parsed_input.data, &name);
+
     let expanded = quote! {
         pub struct #builder_name {
             #builder_fields
@@ -34,6 +36,8 @@ pub fn derive(input: TokenStream) -> TokenStream {
             }
 
             #builder_setters
+
+            #vec_setters
         }
 
         impl #name {
@@ -201,6 +205,83 @@ fn set_fields(data: &Data, ident: &proc_macro2::Ident) -> proc_macro2::TokenStre
     expanded
 }
 
+fn generate_vec_setters(data: &Data, ident: &proc_macro2::Ident) -> proc_macro2::TokenStream {
+    let expanded = match *data {
+        Data::Struct(ref data_struct) => match data_struct.fields {
+            Fields::Named(ref fields_named) => {
+                let vec_setters = fields_named.named.iter().map(|field| {
+                    let name = &field.ident;
+                    let field_type = &field.ty;
+
+                    let name_unwrapped = name.as_ref();
+
+                    if let Some(n) = name_unwrapped {
+                        let mut builder_fields = Vec::new();
+                        for attr in &field.attrs {
+                            if attr.path().is_ident("builder") {
+                                let meta = attr.parse_nested_meta(|meta| {
+                                    if meta.path.is_ident("each") {
+                                        let value = meta.value()?;
+                                        let lit: syn::LitStr = value.parse()?;
+                                        let inner_type = inner_vec_type(field_type, n)?; // TODO: fix unwrap
+
+                                        builder_fields.push((
+                                            n.clone(),
+                                            inner_type.clone(),
+                                            format_ident!("{}", lit.value()),
+                                        ));
+
+                                        Ok(())
+                                    } else {
+                                        Err(Error::new_spanned(&attr.meta, "expected `builder(each = \"...\")`"))
+                                        // Err(meta.error("expected `builder(each = \"...\")`"))
+                                    }
+                                });
+
+                                if let Err(err) = meta {
+                                    return err.to_compile_error();
+                                }
+                            }
+                        }
+
+                        let single_element_setters = builder_fields.into_iter().map(
+                            |(field_name, inner_ty, single_name)| {
+                                quote! {
+                                    pub fn #single_name(&mut self, #single_name: #inner_ty) -> &mut Self {
+                                        let mut current = &mut self.#field_name;
+                                        if let Some(current_vec) = &mut self.#field_name {
+                                            current_vec.push(#single_name);
+                                        } else {
+                                            self.#field_name = Some(vec![#single_name]);
+                                        }
+
+                                        self
+                                    }
+                                }
+                            },
+                        );
+
+                        quote! {
+                            #(#single_element_setters)*
+                        }
+                    } else {
+                        Error::new_spanned(ident, "Expected Struct with Named Fields")
+                            .to_compile_error()
+                    }
+                });
+
+                quote! {
+                    #(#vec_setters)*
+                }
+            }
+            _ => Error::new_spanned(ident, "Expected Struct with Named Fields").to_compile_error(),
+        },
+        _ => Error::new_spanned(ident, "Expected Struct with Named Fields").to_compile_error(),
+    };
+
+    expanded
+}
+
 fn is_option_type(ty: &Type) -> bool {
     if let Type::Path(ref type_path) = ty {
         let segments = &type_path.path.segments;
@@ -227,4 +308,32 @@ fn inner_option_type(ty: &Type) -> &Type {
     }
 
     panic!("Should be an option"); // TODO: return error
+}
+
+fn inner_vec_type<'a>(ty: &'a Type, ident: &proc_macro2::Ident) -> Result<&'a Type, Error> {
+    let inner_type = if let Type::Path(type_path) = ty {
+        let last_segment = type_path
+            .path
+            .segments
+            .last()
+            .ok_or(Error::new_spanned(ident, "Path shouldn't be empty"))?; // TODO: should handle
+
+        if last_segment.ident == "Vec" {
+            if let PathArguments::AngleBracketed(args) = &last_segment.arguments {
+                if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
+                    Ok(inner_ty)
+                } else {
+                    Err(Error::new_spanned(ident, "Should be an inner arg"))
+                }
+            } else {
+                Err(Error::new_spanned(ident, "Vec needs inner args"))
+            }
+        } else {
+            Err(Error::new_spanned(ident, "Type needs to be a Vec"))
+        }
+    } else {
+        Err(Error::new_spanned(ident, "Isn't path"))
+    };
+
+    inner_type
 }

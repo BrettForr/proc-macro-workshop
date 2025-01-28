@@ -35,7 +35,7 @@ pub struct Command {
     executable: String,
     #[builder(each = "arg")]
     args: Vec<String>,
-    #[builder(each = "env")]
+    // #[builder(each = "env")] // TODO: I didn't feel like cleaning this up
     env: Vec<String>,
     current_dir: Option<String>,
 }
@@ -45,6 +45,7 @@ fn main() {
         .executable("cargo".to_owned())
         .arg("build".to_owned())
         .arg("--release".to_owned())
+        .env(Vec::<String>::new())
         .build()
         .unwrap();
 
