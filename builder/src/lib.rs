@@ -29,7 +29,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
         }
 
         impl #builder_name {
-            pub fn build(&self) -> Result<#name, Box<dyn std::error::Error>> {
+            pub fn build(&self) -> std::result::Result<#name, std::boxed::Box<dyn std::error::Error>> {
                 Ok(#name {
                     #set_expressions
                 })
@@ -66,7 +66,7 @@ fn generate_builder_fields(data: &Data, ident: &proc_macro2::Ident) -> proc_macr
                         if is_option_type(ty) {
                             quote! { #n: #ty }
                         } else {
-                            quote! { #n: Option<#ty>}
+                            quote! { #n: std::option::Option<#ty>}
                         }
                     } else {
                         Error::new_spanned(ident, "Expected Struct with Named Fields")
@@ -101,7 +101,7 @@ fn initialize_builder_fields(data: &Data, ident: &proc_macro2::Ident) -> proc_ma
                     let name_unwrapped = name.as_ref();
 
                     if let Some(n) = name_unwrapped {
-                        quote! { #n: None }
+                        quote! { #n: std::option::Option::None }
                     } else {
                         Error::new_spanned(ident, "Expected Struct with Named Fields")
                             .to_compile_error()
@@ -134,12 +134,12 @@ fn generate_builder_setters(data: &Data, ident: &proc_macro2::Ident) -> proc_mac
                         if is_option_type(field_type) {
                             let inner_ty = inner_option_type(field_type);
                             quote! { pub fn #n(&mut self, #n: #inner_ty) -> &mut Self {
-                                self.#n = Some(#n);
+                                self.#n = std::option::Option::Some(#n);
                                 self
                             }}
                         } else {
                             quote! { pub fn #n(&mut self, #n: #field_type) -> &mut Self {
-                                self.#n = Some(#n);
+                                self.#n = std::option::Option::Some(#n);
                                 self
                             }}
                         }
@@ -249,10 +249,10 @@ fn generate_vec_setters(data: &Data, ident: &proc_macro2::Ident) -> proc_macro2:
                                 quote! {
                                     pub fn #single_name(&mut self, #single_name: #inner_ty) -> &mut Self {
                                         let mut current = &mut self.#field_name;
-                                        if let Some(current_vec) = &mut self.#field_name {
+                                        if let std::option::Option::Some(current_vec) = &mut self.#field_name {
                                             current_vec.push(#single_name);
                                         } else {
-                                            self.#field_name = Some(vec![#single_name]);
+                                            self.#field_name = std::option::Option::Some(vec![#single_name]);
                                         }
 
                                         self
