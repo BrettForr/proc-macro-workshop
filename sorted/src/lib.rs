@@ -40,7 +40,7 @@ fn check_order(item_enum: &ItemEnum) -> Result<(), syn::Error> {
         if name < previous_varint {
             // TODO: this seems messy
             for inner_variant in variants.iter() {
-                let inner_name = (&inner_variant.ident).to_string();
+                let inner_name = inner_variant.ident.to_string();
                 if name < inner_name {
                     return Err(syn::Error::new(
                         variant_ident.span(),
