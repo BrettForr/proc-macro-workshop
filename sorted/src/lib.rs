@@ -62,11 +62,11 @@ impl VisitMut for MatchVisitor {
 
             let mut previous_arm = String::new();
 
-            for arm in node.arms.iter() {
-                // eprintln!("In {:?}", arm);
+            let mut match_arms = node.arms.iter().peekable();
 
+            while let Some(arm) = match_arms.next() {
                 match get_arm_name(arm) {
-                    Ok(current_ident) => {
+                    Ok(Some(current_ident)) => {
                         let current_name = current_ident.to_string();
                         if current_name < previous_arm {
                             self.error = Some(syn::Error::new_spanned(
@@ -78,6 +78,12 @@ impl VisitMut for MatchVisitor {
                         }
 
                         previous_arm = current_name;
+                    }
+                    Ok(None) => {
+                        if match_arms.peek().is_some() {
+                            self.error =
+                                Some(syn::Error::new(arm.span(), "Wildcard must be the last arm"));
+                        }
                     }
                     Err(err) => {
                         self.error = Some(err);
@@ -91,7 +97,7 @@ impl VisitMut for MatchVisitor {
     }
 }
 
-fn get_arm_name(arm: &Arm) -> Result<Ident, syn::Error> {
+fn get_arm_name(arm: &Arm) -> Result<Option<Ident>, syn::Error> {
     let arm_span = arm.span();
 
     match &arm.pat {
@@ -99,7 +105,7 @@ fn get_arm_name(arm: &Arm) -> Result<Ident, syn::Error> {
             let current_item = expr_path.path.segments.last();
 
             if let Some(segment) = current_item {
-                Ok(segment.ident.clone())
+                Ok(Some(segment.ident.clone()))
             } else {
                 Err(syn::Error::new(arm_span, "No path fields"))
             }
@@ -107,21 +113,23 @@ fn get_arm_name(arm: &Arm) -> Result<Ident, syn::Error> {
         syn::Pat::TupleStruct(tuple_struct) => {
             let ident = tuple_struct.path.segments.last();
             ident
-                .map(|segment| segment.ident.to_owned())
+                .map(|segment| Some(segment.ident.to_owned()))
                 .ok_or_else(|| {
                     syn::Error::new(arm_span, "Tuple struct doesn't have a single ident")
                 })
         }
         syn::Pat::Struct(pat_struct) => {
             let ident = pat_struct.path.get_ident();
-            ident.map(|id| id.to_owned()).ok_or_else(|| {
+            ident.map(|id| Some(id.to_owned())).ok_or_else(|| {
                 syn::Error::new(arm_span, "Tuple struct doesn't have a single ident")
             })
         }
         syn::Pat::Slice(_) => Err(syn::Error::new(arm.pat.span(), "unsupported by #[sorted]")),
-        _ => Err(syn::Error::new(
+        syn::Pat::Wild(_) => Ok(None),
+        syn::Pat::Ident(pat_ident) => Ok(Some(pat_ident.ident.clone())),
+        other => Err(syn::Error::new(
             arm_span,
-            "Expect match arm to be a path, tuple struct, or struct",
+            format!("Expect match arm to be a path, tuple struct, slice, or wildcard, or struct. Found {:?}", other).as_str(),
         )),
     }
 }
