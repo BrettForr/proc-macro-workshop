@@ -6,7 +6,6 @@ use syn::{Arm, Ident};
 
 #[proc_macro_attribute]
 pub fn check(_args: TokenStream, input: TokenStream) -> TokenStream {
-    eprintln!("Starting check");
     let traversed_token_stream = match find_sort_sites(input.clone()) {
         Ok(item_fn) => item_fn,
         Err(err) => TokenStream::from(err.to_compile_error()),
@@ -46,8 +45,6 @@ fn traverse_fn(item_fn: ItemFn) -> Result<TokenStream, syn::Error> {
         #compile_error
         #item_fn
     };
-
-    eprintln!("{:?}", expanded);
 
     Ok(TokenStream::from(expanded))
 }
@@ -106,10 +103,12 @@ fn get_arm_name(arm: &Arm) -> Result<Ident, syn::Error> {
             }
         }
         syn::Pat::TupleStruct(tuple_struct) => {
-            let ident = tuple_struct.path.get_ident();
-            ident.map(|id| id.to_owned()).ok_or_else(|| {
-                syn::Error::new(arm_span, "Tuple struct doesn't have a single ident")
-            })
+            let ident = tuple_struct.path.segments.last();
+            ident
+                .map(|segment| segment.ident.to_owned())
+                .ok_or_else(|| {
+                    syn::Error::new(arm_span, "Tuple struct doesn't have a single ident")
+                })
         }
         syn::Pat::Struct(pat_struct) => {
             let ident = pat_struct.path.get_ident();
