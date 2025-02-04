@@ -1,6 +1,128 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{Item, ItemEnum};
+use syn::visit_mut::VisitMut;
+use syn::{spanned::Spanned, ExprMatch, Item, ItemEnum, ItemFn};
+use syn::{Arm, Ident};
+
+#[proc_macro_attribute]
+pub fn check(_args: TokenStream, input: TokenStream) -> TokenStream {
+    eprintln!("Starting check");
+    let traversed_token_stream = match find_sort_sites(input.clone()) {
+        Ok(item_fn) => item_fn,
+        Err(err) => TokenStream::from(err.to_compile_error()),
+    };
+
+    traversed_token_stream
+}
+
+fn find_sort_sites(input: TokenStream) -> Result<TokenStream, syn::Error> {
+    let parsed_input = syn::parse::<Item>(input)?;
+
+    match parsed_input {
+        Item::Fn(item_fn) => {
+            let modified_fn = traverse_fn(item_fn)?;
+            Ok(modified_fn)
+        }
+        _ => Err(syn::Error::new(
+            parsed_input.span(),
+            "sorted::check must be applied to a fn.",
+        )),
+    }
+}
+
+fn traverse_fn(item_fn: ItemFn) -> Result<TokenStream, syn::Error> {
+    let mut item_fn = item_fn;
+
+    let mut match_visitor = MatchVisitor { error: None };
+
+    match_visitor.visit_item_fn_mut(&mut item_fn);
+
+    let compile_error = match match_visitor.error {
+        Some(err) => err.to_compile_error(),
+        None => quote! {},
+    };
+
+    let expanded = quote! {
+        #compile_error
+        #item_fn
+    };
+
+    eprintln!("{:?}", expanded);
+
+    Ok(TokenStream::from(expanded))
+}
+
+struct MatchVisitor {
+    error: Option<syn::Error>,
+}
+
+impl VisitMut for MatchVisitor {
+    fn visit_expr_match_mut(&mut self, node: &mut ExprMatch) {
+        let attrs = &node.attrs;
+
+        let sorted_attr_position = attrs.iter().position(|attr| attr.path().is_ident("sorted"));
+
+        if let Some(position) = sorted_attr_position {
+            node.attrs.remove(position);
+
+            let mut previous_arm = String::new();
+
+            for arm in node.arms.iter() {
+                // eprintln!("In {:?}", arm);
+
+                match get_arm_name(arm) {
+                    Ok(current_ident) => {
+                        let current_name = current_ident.to_string();
+                        if current_name < previous_arm {
+                            self.error = Some(syn::Error::new_spanned(
+                                current_ident,
+                                format!("{} should sort before {}", current_name, previous_arm)
+                                    .as_str(),
+                            ))
+                        }
+
+                        previous_arm = current_name;
+                    }
+                    Err(err) => self.error = Some(err),
+                }
+            }
+        }
+
+        syn::visit_mut::visit_expr_match_mut(self, node);
+    }
+}
+
+fn get_arm_name(arm: &Arm) -> Result<Ident, syn::Error> {
+    let arm_span = arm.span();
+
+    match &arm.pat {
+        syn::Pat::Path(expr_path) => {
+            let current_item = expr_path.path.segments.last();
+
+            if let Some(segment) = current_item {
+                Ok(segment.ident.clone())
+            } else {
+                Err(syn::Error::new(arm_span, "No path fields"))
+            }
+        }
+        syn::Pat::TupleStruct(tuple_struct) => {
+            let ident = tuple_struct.path.get_ident();
+            ident.map(|id| id.to_owned()).ok_or_else(|| {
+                syn::Error::new(arm_span, "Tuple struct doesn't have a single ident")
+            })
+        }
+        syn::Pat::Struct(pat_struct) => {
+            let ident = pat_struct.path.get_ident();
+            ident.map(|id| id.to_owned()).ok_or_else(|| {
+                syn::Error::new(arm_span, "Tuple struct doesn't have a single ident")
+            })
+        }
+        _ => Err(syn::Error::new(
+            arm_span,
+            "Expect match arm to be a path, tuple struct, or struct",
+        )),
+    }
+}
 
 #[proc_macro_attribute]
 pub fn sorted(_args: TokenStream, input: TokenStream) -> TokenStream {
