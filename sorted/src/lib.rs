@@ -6,12 +6,10 @@ use syn::{Arm, Ident};
 
 #[proc_macro_attribute]
 pub fn check(_args: TokenStream, input: TokenStream) -> TokenStream {
-    let traversed_token_stream = match find_sort_sites(input.clone()) {
+    match find_sort_sites(input.clone()) {
         Ok(item_fn) => item_fn,
         Err(err) => TokenStream::from(err.to_compile_error()),
-    };
-
-    traversed_token_stream
+    }
 }
 
 fn find_sort_sites(input: TokenStream) -> Result<TokenStream, syn::Error> {
@@ -75,12 +73,16 @@ impl VisitMut for MatchVisitor {
                                 current_ident,
                                 format!("{} should sort before {}", current_name, previous_arm)
                                     .as_str(),
-                            ))
+                            ));
+                            break;
                         }
 
                         previous_arm = current_name;
                     }
-                    Err(err) => self.error = Some(err),
+                    Err(err) => {
+                        self.error = Some(err);
+                        break;
+                    }
                 }
             }
         }
@@ -116,6 +118,7 @@ fn get_arm_name(arm: &Arm) -> Result<Ident, syn::Error> {
                 syn::Error::new(arm_span, "Tuple struct doesn't have a single ident")
             })
         }
+        syn::Pat::Slice(_) => Err(syn::Error::new(arm.pat.span(), "unsupported by #[sorted]")),
         _ => Err(syn::Error::new(
             arm_span,
             "Expect match arm to be a path, tuple struct, or struct",
